@@ -1,0 +1,16 @@
+version: "3.2"
+
+services:
+  sun-panel:
+    build: .
+    image: 'sun-panel-v2:custom'
+    container_name: sun-panel-v2
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ./conf:/app/conf
+    - ./uploads:/app/uploads
+    - ./database:/app/database
+    # - ./runtime:/app/runtime
+    ports:
+    - 3002:3002
+    restart: always
