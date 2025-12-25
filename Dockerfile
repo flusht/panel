@@ -35,6 +35,7 @@ RUN apk add --no-cache bash curl gcc git musl-dev
 
 RUN go env -w GO111MODULE=on \
     && export PATH=$PATH:/go/bin \
+    && go mod tidy \
     && go install -a -v github.com/go-bindata/go-bindata/...@latest \
     && go install -a -v github.com/elazarl/go-bindata-assetfs/...@latest \
     && go-bindata-assetfs -o=assets/bindata.go -pkg=assets assets/... \
