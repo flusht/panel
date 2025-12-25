@@ -34,12 +34,17 @@ COPY ./service .
 RUN apk add --no-cache bash curl gcc git musl-dev
 
 RUN go env -w GO111MODULE=on \
-    && export PATH=$PATH:/go/bin \
-    && go mod tidy \
-    && go install -a -v github.com/go-bindata/go-bindata/...@latest \
-    && go install -a -v github.com/elazarl/go-bindata-assetfs/...@latest \
-    && go-bindata-assetfs -o=assets/bindata.go -pkg=assets assets/... \
-    && go build -o sun-panel --ldflags="-X sun-panel/global.RUNCODE=release -X sun-panel/global.ISDOCKER=docker" main.go
+    && export PATH=$PATH:/go/bin
+
+# 清理旧的 go.sum 防止冲突
+RUN rm -f go.sum && go mod tidy
+
+RUN go install -a -v github.com/go-bindata/go-bindata/...@latest \
+    && go install -a -v github.com/elazarl/go-bindata-assetfs/...@latest
+
+RUN go-bindata-assetfs -o=assets/bindata.go -pkg=assets assets/...
+
+RUN go build -o sun-panel --ldflags="-X sun-panel/global.RUNCODE=release -X sun-panel/global.ISDOCKER=docker" main.go
 
 
 
