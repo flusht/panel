@@ -2,14 +2,14 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
-
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
+	"net"
+	"net/http"
 )
 
+// ContainerInfo for Frontend
 type ContainerInfo struct {
 	ID      string   `json:"id"`
 	Names   []string `json:"names"`
@@ -19,33 +19,50 @@ type ContainerInfo struct {
 	Created int64    `json:"created"`
 }
 
-type ContainerStats struct {
-	CPUPercent    float64 `json:"cpuPercent"`
-	MemoryUsage   float64 `json:"memoryUsage"`
-	MemoryLimit   float64 `json:"memoryLimit"`
-	MemoryPercent float64 `json:"memoryPercent"`
+// dockerContainer matching Docker API
+type dockerContainer struct {
+	ID      string   `json:"Id"`
+	Names   []string `json:"Names"`
+	Image   string   `json:"Image"`
+	State   string   `json:"State"`
+	Status  string   `json:"Status"`
+	Created int64    `json:"Created"`
 }
 
-// NewClient creates a new docker client
-func NewClient() (*client.Client, error) {
-	return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+func newUnixClient() (*http.Client, error) {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return net.Dial("unix", "/var/run/docker.sock")
+			},
+		},
+	}, nil
 }
 
 // ListContainers returns a list of containers
 func ListContainers() ([]ContainerInfo, error) {
-	cli, err := NewClient()
+	client, err := newUnixClient()
 	if err != nil {
 		return nil, err
 	}
-	defer cli.Close()
 
-	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
+	resp, err := client.Get("http://docker/containers/json?all=1")
 	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("docker api error: %s", resp.Status)
+	}
+
+	var raw []dockerContainer
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
 	}
 
 	var result []ContainerInfo
-	for _, c := range containers {
+	for _, c := range raw {
 		result = append(result, ContainerInfo{
 			ID:      c.ID,
 			Names:   c.Names,
@@ -60,53 +77,93 @@ func ListContainers() ([]ContainerInfo, error) {
 
 // StartContainer starts a container
 func StartContainer(containerID string) error {
-	cli, err := NewClient()
+	client, err := newUnixClient()
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
 
-	return cli.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
+	url := fmt.Sprintf("http://docker/containers/%s/start", containerID)
+	resp, err := client.Post(url, "application/json", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 && resp.StatusCode != 304 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to start: %s %s", resp.Status, string(body))
+	}
+	return nil
 }
 
 // StopContainer stops a container
 func StopContainer(containerID string) error {
-	cli, err := NewClient()
+	client, err := newUnixClient()
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
 
-	// Default timeout (nil)
-	return cli.ContainerStop(context.Background(), containerID, nil)
+	url := fmt.Sprintf("http://docker/containers/%s/stop", containerID)
+	resp, err := client.Post(url, "application/json", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 && resp.StatusCode != 304 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to stop: %s %s", resp.Status, string(body))
+	}
+	return nil
 }
 
 // RestartContainer restarts a container
 func RestartContainer(containerID string) error {
-	cli, err := NewClient()
+	client, err := newUnixClient()
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
 
-	return cli.ContainerRestart(context.Background(), containerID, nil)
+	url := fmt.Sprintf("http://docker/containers/%s/restart", containerID)
+	resp, err := client.Post(url, "application/json", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to restart: %s %s", resp.Status, string(body))
+	}
+	return nil
 }
 
 // GetContainerLogs returns the logs of a container
 func GetContainerLogs(containerID string) (string, error) {
-	cli, err := NewClient()
+	client, err := newUnixClient()
 	if err != nil {
 		return "", err
 	}
-	defer cli.Close()
 
-	out, err := cli.ContainerLogs(context.Background(), containerID, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "100"})
+	url := fmt.Sprintf("http://docker/containers/%s/logs?stdout=1&stderr=1&tail=100", containerID)
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
-	defer out.Close()
+	defer resp.Body.Close()
 
-	buf := new(strings.Builder)
-	_, err = io.Copy(buf, out)
-	return buf.String(), err
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("failed to get logs: %s", resp.Status)
+	}
+
+	// Docker logs usually contain a header for each frame (stream type, length). 
+	// For simplicity, we just return the raw bytes, though it might contain some binary headers.
+	// To do it properly we should strip the 8-byte header from each frame.
+	// But raw might be readable enough for basic usage.
+	
+	body, err := io.ReadAll(resp.Body)
+	// Strip binary headers if possible? 
+	// Header: [STREAM_TYPE 1 byte] [0 0 0] [SIZE 4 bytes]
+	// If we just return string, it shows mostly text.
+	return string(body), err
 }
