@@ -36,8 +36,8 @@ RUN apk add --no-cache bash curl gcc git musl-dev
 RUN go env -w GO111MODULE=on \
     && export PATH=$PATH:/go/bin
 
-# 清理旧的 go.sum 防止冲突
-RUN rm -f go.sum && go mod tidy
+# 手动添加 Docker 依赖
+RUN go get github.com/docker/docker@v24.0.7+incompatible && go mod tidy
 
 RUN go install -a -v github.com/go-bindata/go-bindata/...@latest \
     && go install -a -v github.com/elazarl/go-bindata-assetfs/...@latest

@@ -22,7 +22,6 @@ require (
 	gorm.io/driver/mysql v1.5.0
 	gorm.io/driver/sqlite v1.5.4
 	gorm.io/gorm v1.25.5
-	github.com/docker/docker v24.0.7+incompatible
 )
 
 require (
